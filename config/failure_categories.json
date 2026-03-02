@@ -1,0 +1,11 @@
+{
+  "categories": [
+    "sensor_fault",
+    "wiring_harness_fault",
+    "mechanical_obstruction",
+    "can_communication_fault",
+    "eca_unit_fault",
+    "software_version_issue",
+    "unknown_or_noise"
+  ]
+}

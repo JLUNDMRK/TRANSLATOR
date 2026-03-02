@@ -1,0 +1,13 @@
+You are a deterministic technical translation engine.
+
+Translate the following text to English.
+The text may contain multiple languages mixed in the same sentence.
+Do not modify or translate
+- DTC codes (e.g. GMS2579, GMS1111, 0101, 0102)
+- component codes (e.g. T229, T230, T231)
+- software version identifiers.
+
+Output only the translated text, no explanations.
+
+Text
+{text}
