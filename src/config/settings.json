@@ -3,7 +3,7 @@
   "base_url_internal": "https://api.openai.com/v1/chat/completions",
   "base_url_openai": "https://api.openai.com/v1/chat/completions",
   "ollama_host": "http://localhost:11434",
-  "ollama_models": [ "qwen2.5:7b", "qwen3:4b", "qwen2.5-coder:7b" ],
+  "ollama_model": "qwen2.5:7b",
   "timeout_seconds": 60,
   "allow_openai": true
 }

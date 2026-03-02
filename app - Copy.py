@@ -7,8 +7,8 @@ from src.runtime.internal_gpt import InternalGPTRuntime
 from src.runtime.ollama_runtime import OllamaRuntime
 from src.pipeline.pipeline import run_pipeline
 
-# Load settings from JSON
-with open('src/config/settings.json') as f:
+# Load settings from JSON (update the file path as needed)
+with open('config/settings.json') as f:
     settings = json.load(f)
 
 ollama_models = settings.get("ollama_models", [])
@@ -69,7 +69,8 @@ class App:
         row += 1
 
         tk.Label(root, text="Välj Ollama Modell:").grid(row=row, column=0, sticky="w")
-        for model in ollama_models:
+        # Use the only model from settings
+self.ollama_model_choice_var = settings["ollama_model"]
             tk.Radiobutton(root, text=model, variable=self.ollama_model_choice_var, value=model).grid(row=row, column=1, sticky="w")
             row += 1
 
@@ -121,7 +122,7 @@ class App:
         claim = self.claim_path_var.get().strip()
         dtc = self.dtc_path_var.get().strip()
         api_key = self.api_key_var.get().strip()
-        model = self.model_var.get().strip()
+        model = "qwen2.5:7b"
         runtime_choice = self.runtime_var.get()
 
         if not claim or not Path(claim).exists():
@@ -139,10 +140,11 @@ class App:
         self.root.update_idletasks()
 
         # Example for logging progress
-to_process = [...]
+        to_process = [{"original": "Example text 1"}, {"original": "Example text 2"}]
+
         for index, row in enumerate(to_process):  # Assuming you have data to process
             original = row.get("original", "N/A")  # Extract original text
-            new = "Processed text here"  # Replace with actual processing
+            new = "Processed text here"  new = f"Processed: {original}"
             self.progress_text.insert(tk.END, f"Translate row {index}: original: {original} new: {new}\n")
             self.progress_text.update()  # Update the GUI immediately
 
