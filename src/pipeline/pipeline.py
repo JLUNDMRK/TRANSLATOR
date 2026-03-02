@@ -1,77 +1,63 @@
-from pathlib import Path
-from typing import Tuple, List, Dict, Any
-
 import pandas as pd
+from pathlib import Path
 
-from .extractor import (
-    extract_dtc_codes,
-    extract_component_codes,
-    extract_sw_versions,
-)
-from .dtc_lookup import load_dtc_database, lookup_dtc_entries
-from .translator import translate_texts
-from .failure_mode import infer_failure_modes_for_rows
-from .classifier import classify_failure_mode
+def run_pipeline(claim_file, dtc_file, runtime, target_lang="en", progress_callback=None):
+    """
+    claim_file: path to claim Excel/CSV
+    dtc_file: path to DTC Excel/CSV
+    runtime: InternalGPTRuntime or OllamaRuntime
+    target_lang: "en" or "sv"
+    progress_callback: function for logging progress
+    """
 
-from ..runtime.base import BaseRuntime
+    # Load files
+    claim_df = pd.read_excel(claim_file) if claim_file.endswith(".xlsx") else pd.read_csv(claim_file)
+    dtc_df = pd.read_excel(dtc_file) if dtc_file.endswith(".xlsx") else pd.read_csv(dtc_file)
 
+    # Ensure required columns exist
+    if "CLAIM_TEXT_DESC" not in claim_df.columns:
+        raise ValueError("CLAIM_TEXT_DESC saknas i claim-filen.")
 
-def run_pipeline(
-    claim_file: str,
-    dtc_file: str,
-    runtime: BaseRuntime,
-    text_column: str = "CLAIM_TEXT_DESC",
-) -> Path:
-    claim_path = Path(claim_file)
-    dtc_path = Path(dtc_file)
+    texts = claim_df["CLAIM_TEXT_DESC"].fillna("").tolist()
 
-    if claim_path.suffix.lower() in [".xlsx", ".xls"]:
-        df = pd.read_excel(claim_path)
-    else:
-        df = pd.read_csv(claim_path)
+    detected_languages = []
+    translated_texts = []
 
-    dtc_map = load_dtc_database(str(dtc_path))
+    for i, text in enumerate(texts):
+        if progress_callback:
+            progress_callback(f"Rad {i}: Detekterar språk...")
 
-    texts: List[str] = df[text_column].fillna("").astype(str).tolist()
+        # Language detection
+        try:
+            lang = runtime.detect_language(text)
+        except Exception:
+            lang = "unknown"
 
-    dtc_codes_list: List[List[str]] = []
-    component_codes_list: List[List[str]] = []
-    sw_versions_list: List[List[str]] = []
+        detected_languages.append(lang)
 
-    for t in texts:
-        dtc_codes_list.append(extract_dtc_codes(t))
-        component_codes_list.append(extract_component_codes(t))
-        sw_versions_list.append(extract_sw_versions(t))
+        if progress_callback:
+            progress_callback(f"Rad {i}: Språk = {lang}, översätter till {target_lang}...")
 
-    dtc_entries_list: List[List[Dict[str, Any]]] = []
-    for codes in dtc_codes_list:
-        dtc_entries_list.append(lookup_dtc_entries(dtc_map, codes))
+        # Translation
+        try:
+            translated = runtime.translate(text, target_lang)
+        except Exception:
+            translated = text  # fallback
 
-    translated_texts = translate_texts(runtime, texts)
+        translated_texts.append(translated)
 
-    failure_modes = infer_failure_modes_for_rows(
-        runtime,
-        texts,
-        translated_texts,
-        dtc_codes_list,
-        component_codes_list,
-        sw_versions_list,
-        dtc_entries_list,
-    )
+        if progress_callback:
+            progress_callback(f"Rad {i}: Klar.")
 
-    df["translated_text"] = translated_texts
-    df["dtc_codes"] = [", ".join(c) for c in dtc_codes_list]
-    df["component_codes"] = [", ".join(c) for c in component_codes_list]
-    df["sw_versions"] = [", ".join(c) for c in sw_versions_list]
-    df["failure_mode_primary"] = [fm.get("primary", "") for fm in failure_modes]
-    df["failure_mode_secondary"] = [fm.get("secondary", "") for fm in failure_modes]
-    df["failure_mode_unrelated"] = [
-        ", ".join(fm.get("unrelated", []) or []) for fm in failure_modes
-    ]
-    df["failure_category"] = [classify_failure_mode(fm) for fm in failure_modes]
+    # Add new columns
+    claim_df["detected_language"] = detected_languages
+    claim_df["translated_text"] = translated_texts
 
-    out_dir = Path("data/output")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{claim_path.stem}_analyzed.xlsx"
-    df.to_excel(out_path, index=False)
-    return out_path
+    # Save output
+    out_path = Path(claim_file).with_name("claim_translated_output.xlsx")
+    claim_df.to_excel(out_path, index=False)
+
+    if progress_callback:
+        progress_callback(f"Pipeline klar. Sparad till: {out_path}")
+
+    return str(out_path)

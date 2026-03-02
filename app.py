@@ -7,6 +7,7 @@ from src.runtime.internal_gpt import InternalGPTRuntime
 from src.runtime.ollama_runtime import OllamaRuntime
 from src.pipeline.pipeline import run_pipeline
 
+
 # Load settings
 with open("config/settings.json", "r", encoding="utf-8") as f:
     settings = json.load(f)
@@ -27,6 +28,9 @@ class App:
         self.status_var = tk.StringVar(value="Redo.")
         self.runtime_var = tk.StringVar(value="internal")
         self.ollama_model_choice_var = tk.StringVar(value=default_ollama_model)
+
+        # NEW: Target language selection
+        self.target_lang_var = tk.StringVar(value="en")  # en or sv
 
         row = 0
 
@@ -66,6 +70,11 @@ class App:
         self.ollama_dropdown.grid(row=row, column=1, sticky="w")
         row += 1
 
+        # NEW: Target language dropdown
+        tk.Label(root, text="Översätt till språk:").grid(row=row, column=0, sticky="w")
+        tk.OptionMenu(root, self.target_lang_var, "en", "sv").grid(row=row, column=1, sticky="w")
+        row += 1
+
         # API key
         tk.Label(root, text="API-nyckel (intern/extern):").grid(row=row, column=0, sticky="w")
         self.api_entry = tk.Entry(root, textvariable=self.api_key_var, width=60, show="*")
@@ -83,7 +92,10 @@ class App:
         row += 1
 
         # Progress text box
-        self.progress_text = tk.Text(root, height=10, width=70)
+        tk.Label(root, text="Progress:").grid(row=row, column=0, sticky="w")
+        row += 1
+
+        self.progress_text = tk.Text(root, height=12, width=80)
         self.progress_text.grid(row=row, column=0, columnspan=3)
         row += 1
 
@@ -115,12 +127,18 @@ class App:
         if path:
             self.dtc_path_var.set(path)
 
+    def log(self, text: str):
+        self.progress_text.insert(tk.END, text + "\n")
+        self.progress_text.see(tk.END)
+        self.progress_text.update()
+
     def run(self):
         claim = self.claim_path_var.get().strip()
         dtc = self.dtc_path_var.get().strip()
         api_key = self.api_key_var.get().strip()
         runtime_choice = self.runtime_var.get()
         ollama_model = self.ollama_model_choice_var.get()
+        target_lang = self.target_lang_var.get()
 
         if not claim or not Path(claim).exists():
             messagebox.showerror("Fel", "Ogiltig claim-fil.")
@@ -144,8 +162,16 @@ class App:
                 runtime = InternalGPTRuntime(api_key=api_key, model=self.model_var.get(), use_internal=True)
             else:
                 runtime = InternalGPTRuntime(api_key=api_key, model=self.model_var.get(), use_internal=False)
+            # 🔥 Aktivera loggning till GUI 
+            runtime.set_logger(self.log)
 
-            out_path = run_pipeline(claim, dtc, runtime)
+            out_path = run_pipeline(
+                claim_file=claim,
+                dtc_file=dtc,
+                runtime=runtime,
+                target_lang=target_lang,
+                progress_callback=self.log
+            )
 
         except Exception as e:
             self.status_var.set("Fel.")
