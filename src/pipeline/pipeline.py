@@ -5,7 +5,7 @@ def run_pipeline(claim_file, dtc_file, runtime, target_lang="en", progress_callb
     """
     claim_file: path to claim Excel/CSV
     dtc_file: path to DTC Excel/CSV
-    runtime: InternalGPTRuntime or OllamaRuntime
+    runtime: InternalGPTRuntime, OllamaRuntime or CopilotRuntime
     target_lang: "en" or "sv"
     progress_callback: function for logging progress
     """

@@ -6,7 +6,7 @@ Litet GUI-program för att:
 - extrahera felkoder, komponentkoder, SW-versioner
 - slå upp DTC-information
 - översätta text till engelska
-- tolka felmod (failure mode) med GPT
+- tolka felmod (failure mode) med GPT (support för interna, OpenAI/extern och GitHub Copilot‑stilen runtimes)
 - skriva ut ny Excel-fil
 
 ## Körning (utveckling)

@@ -1,4 +1,6 @@
 import json
+import random
+import time
 import requests
 from pathlib import Path
 
@@ -40,24 +42,46 @@ class InternalGPTRuntime(BaseRuntime):
 
         self.timeout = settings.get("timeout_seconds", 60)
 
+        # Retry config (optional from settings.json)
+        self.max_retries = settings.get("max_retries", 6)  # total attempts
+        self.max_backoff_seconds = settings.get("max_backoff_seconds", 60)
+
         # Logger callback
         self.log_callback = None
 
     def set_logger(self, callback):
         self.log_callback = callback
 
+    def _log(self, msg: str):
+        if self.log_callback:
+            self.log_callback(msg)
+
+    def _sleep_with_backoff(self, attempt: int, retry_after: str | None):
+        """
+        Exponential backoff with jitter. If Retry-After header exists, prefer it.
+        """
+        delay = None
+        if retry_after:
+            try:
+                delay = float(retry_after)
+            except ValueError:
+                delay = None
+
+        if delay is None:
+            delay = min(float(self.max_backoff_seconds), (2 ** attempt) + random.random())
+
+        self._log(f"429/5xx: väntar {delay:.1f}s innan retry (försök {attempt + 1}/{self.max_retries})...")
+        time.sleep(delay)
+
     def _call(self, prompt: str) -> str:
         # Log prompt
-        if self.log_callback:
-            self.log_callback("----- PROMPT TILL MODELLEN -----")
-            self.log_callback(prompt)
-            self.log_callback("--------------------------------")
+        self._log("----- PROMPT TILL MODELLEN -----")
+        self._log(prompt)
+        self._log("--------------------------------")
 
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
+            "messages": [{"role": "user", "content": prompt}],
         }
 
         headers = {
@@ -65,31 +89,82 @@ class InternalGPTRuntime(BaseRuntime):
             "Content-Type": "application/json",
         }
 
-        try:
-            resp = requests.post(
-                f"{self.base_url}/v1/chat/completions",
-                json=payload,
-                headers=headers,
-                timeout=self.timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            result = data["choices"][0]["message"]["content"].strip()
+        url = f"{self.base_url}"
+        last_exc: Exception | None = None
 
-        except Exception as e:
-            if self.log_callback:
-                self.log_callback("----- FEL VID API-ANROP -----")
-                self.log_callback(str(e))
-                self.log_callback("--------------------------------")
-            raise
+        for attempt in range(int(self.max_retries)):
+            try:
+                resp = requests.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
 
-        # Log response
-        if self.log_callback:
-            self.log_callback("----- SVAR FRÅN MODELLEN -----")
-            self.log_callback(result)
-            self.log_callback("--------------------------------")
+                # Success
+                if resp.status_code < 400:
+                    data = resp.json()
+                    result = data["choices"][0]["message"]["content"].strip()
 
-        return result
+                    # Log response
+                    self._log("----- SVAR FRÅN MODELLEN -----")
+                    self._log(result)
+                    self._log("--------------------------------")
+
+                    return result
+
+                # Retriable statuses
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    retry_after = resp.headers.get("Retry-After")
+
+                    self._log("----- FEL VID API-ANROP -----")
+                    self._log(f"HTTP {resp.status_code} för url: {resp.url}")
+                    if retry_after:
+                        self._log(f"Retry-After: {retry_after}")
+                    body = (resp.text or "").strip()
+                    if body:
+                        self._log(body[:2000])  # avoid flooding GUI
+                    self._log("--------------------------------")
+
+                    # last attempt -> raise
+                    if attempt == self.max_retries - 1:
+                        resp.raise_for_status()
+
+                    self._sleep_with_backoff(attempt, retry_after)
+                    continue
+
+                # Non-retriable error
+                self._log("----- FEL VID API-ANROP -----")
+                self._log(f"HTTP {resp.status_code} för url: {resp.url}")
+                body = (resp.text or "").strip()
+                if body:
+                    self._log(body[:2000])
+                self._log("--------------------------------")
+                resp.raise_for_status()
+
+            except requests.RequestException as e:
+                last_exc = e
+                self._log("----- FEL VID API-ANROP -----")
+                self._log(f"RequestException: {e}")
+                self._log("--------------------------------")
+
+                if attempt == self.max_retries - 1:
+                    raise
+
+                self._sleep_with_backoff(attempt, None)
+
+            except Exception as e:
+                # Any other exception (JSON parse, key errors, etc.)
+                last_exc = e
+                self._log("----- FEL VID API-ANROP -----")
+                self._log(str(e))
+                self._log("--------------------------------")
+                raise
+
+        # Should not reach here, but for safety:
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("Okänt fel i _call().")
 
     def translate(self, text: str, target_lang: str) -> str:
         tmpl = load_prompt("translate.txt")
@@ -135,4 +210,3 @@ class InternalGPTRuntime(BaseRuntime):
                 "secondary": None,
                 "unrelated": [],
             }
-

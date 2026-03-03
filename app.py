@@ -1,10 +1,12 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from tkinter import ttk
 from pathlib import Path
 import json
 
 from src.runtime.internal_gpt import InternalGPTRuntime
 from src.runtime.ollama_runtime import OllamaRuntime
+from src.runtime.copilot import CopilotRuntime
 from src.pipeline.pipeline import run_pipeline
 
 
@@ -29,8 +31,14 @@ class App:
         self.runtime_var = tk.StringVar(value="internal")
         self.ollama_model_choice_var = tk.StringVar(value=default_ollama_model)
 
-        # NEW: Target language selection
+        # Target language selection
         self.target_lang_var = tk.StringVar(value="en")  # en or sv
+
+        # --- Log routing state ---
+        # Where should incoming log lines go right now?
+        # "api" = prompts+responses, "err" = errors, "other" = general/progress
+        self._log_mode = "other"
+        self._in_block = False  # between ----- ... ----- and --------------------------------
 
         row = 0
 
@@ -51,17 +59,38 @@ class App:
         runtime_frame = tk.Frame(root)
         runtime_frame.grid(row=row, column=1, sticky="w", padx=5)
 
-        tk.Radiobutton(runtime_frame, text="Intern GPT / Closed OpenAI",
-                       variable=self.runtime_var, value="internal",
-                       command=self.on_runtime_change).pack(anchor="w")
+        tk.Radiobutton(
+            runtime_frame,
+            text="Intern GPT / Closed OpenAI",
+            variable=self.runtime_var,
+            value="internal",
+            command=self.on_runtime_change,
+        ).pack(anchor="w")
 
-        tk.Radiobutton(runtime_frame, text="Ollama (Apple Silicon / NVIDIA)",
-                       variable=self.runtime_var, value="ollama",
-                       command=self.on_runtime_change).pack(anchor="w")
+        tk.Radiobutton(
+            runtime_frame,
+            text="Ollama (Apple Silicon / NVIDIA)",
+            variable=self.runtime_var,
+            value="ollama",
+            command=self.on_runtime_change,
+        ).pack(anchor="w")
 
-        tk.Radiobutton(runtime_frame, text="Extern OpenAI",
-                       variable=self.runtime_var, value="openai",
-                       command=self.on_runtime_change).pack(anchor="w")
+        tk.Radiobutton(
+            runtime_frame,
+            text="Extern OpenAI",
+            variable=self.runtime_var,
+            value="openai",
+            command=self.on_runtime_change,
+        ).pack(anchor="w")
+
+        tk.Radiobutton(
+            runtime_frame,
+            text="GitHub Copilot style",
+            variable=self.runtime_var,
+            value="copilot",
+            command=self.on_runtime_change,
+        ).pack(anchor="w")
+
         row += 1
 
         # Ollama model dropdown
@@ -70,7 +99,7 @@ class App:
         self.ollama_dropdown.grid(row=row, column=1, sticky="w")
         row += 1
 
-        # NEW: Target language dropdown
+        # Target language dropdown
         tk.Label(root, text="Översätt till språk:").grid(row=row, column=0, sticky="w")
         tk.OptionMenu(root, self.target_lang_var, "en", "sv").grid(row=row, column=1, sticky="w")
         row += 1
@@ -86,35 +115,72 @@ class App:
         tk.Entry(root, textvariable=self.model_var, width=30).grid(row=row, column=1, sticky="w", padx=5)
         row += 1
 
-        # Run button + status
-        tk.Button(root, text="Kör", command=self.run).grid(row=row, column=0, pady=10)
-        tk.Label(root, textvariable=self.status_var).grid(row=row, column=1, sticky="w")
+        # Buttons row
+        btn_frame = tk.Frame(root)
+        btn_frame.grid(row=row, column=0, columnspan=3, sticky="w", pady=10)
+
+        tk.Button(btn_frame, text="Kör", command=self.run).pack(side="left")
+
+        tk.Button(btn_frame, text="Rensa API-logg", command=self.clear_api_log).pack(side="left", padx=8)
+        tk.Button(btn_frame, text="Rensa Fel-logg", command=self.clear_error_log).pack(side="left", padx=8)
+
+        tk.Label(btn_frame, textvariable=self.status_var).pack(side="left", padx=12)
         row += 1
 
-        # Progress text box
-        tk.Label(root, text="Progress:").grid(row=row, column=0, sticky="w")
+        # Notebook (tabs) for logs
+        tk.Label(root, text="Loggar:").grid(row=row, column=0, sticky="w")
         row += 1
 
-        self.progress_text = tk.Text(root, height=12, width=80)
-        self.progress_text.grid(row=row, column=0, columnspan=3)
-        row += 1
+        self.notebook = ttk.Notebook(root)
+        self.notebook.grid(row=row, column=0, columnspan=3, sticky="nsew")
+
+        # Make the notebook expand
+        root.grid_rowconfigure(row, weight=1)
+        root.grid_columnconfigure(1, weight=1)
+
+        # Tab 1: API Log (prompts + replies)
+        api_tab = ttk.Frame(self.notebook)
+        self.notebook.add(api_tab, text="API Log (Prompt/Svar)")
+
+        self.api_text = tk.Text(api_tab, height=18, width=110, wrap="word")
+        self.api_text.pack(side="left", fill="both", expand=True)
+        api_scroll = ttk.Scrollbar(api_tab, orient="vertical", command=self.api_text.yview)
+        api_scroll.pack(side="right", fill="y")
+        self.api_text.configure(yscrollcommand=api_scroll.set)
+
+        # Tab 2: Errors
+        err_tab = ttk.Frame(self.notebook)
+        self.notebook.add(err_tab, text="Fel (API & Körning)")
+
+        self.err_text = tk.Text(err_tab, height=18, width=110, wrap="word")
+        self.err_text.pack(side="left", fill="both", expand=True)
+        err_scroll = ttk.Scrollbar(err_tab, orient="vertical", command=self.err_text.yview)
+        err_scroll.pack(side="right", fill="y")
+        self.err_text.configure(yscrollcommand=err_scroll.set)
+
+        # Tab 3: Progress (optional, but useful)
+        prog_tab = ttk.Frame(self.notebook)
+        self.notebook.add(prog_tab, text="Progress")
+
+        self.progress_text = tk.Text(prog_tab, height=18, width=110, wrap="word")
+        self.progress_text.pack(side="left", fill="both", expand=True)
+        prog_scroll = ttk.Scrollbar(prog_tab, orient="vertical", command=self.progress_text.yview)
+        prog_scroll.pack(side="right", fill="y")
+        self.progress_text.configure(yscrollcommand=prog_scroll.set)
 
         self.on_runtime_change()
 
     def on_runtime_change(self):
         choice = self.runtime_var.get()
-
         if choice == "ollama":
             self.api_entry.config(state="disabled")
-        elif choice == "openai":
-            self.api_entry.config(state="normal")
-        else:  # internal
+        else:
             self.api_entry.config(state="normal")
 
     def choose_claim(self):
         path = filedialog.askopenfilename(
             title="Välj claim-fil",
-            filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv"), ("Alla filer", "*.*")]
+            filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv"), ("Alla filer", "*.*")],
         )
         if path:
             self.claim_path_var.set(path)
@@ -122,15 +188,81 @@ class App:
     def choose_dtc(self):
         path = filedialog.askopenfilename(
             title="Välj DTC-fil",
-            filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv"), ("Alla filer", "*.*")]
+            filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv"), ("Alla filer", "*.*")],
         )
         if path:
             self.dtc_path_var.set(path)
 
+    def clear_api_log(self):
+        self.api_text.delete("1.0", tk.END)
+
+    def clear_error_log(self):
+        self.err_text.delete("1.0", tk.END)
+
+    def clear_progress_log(self):
+        self.progress_text.delete("1.0", tk.END)
+
+    def _append_text(self, widget: tk.Text, text: str):
+        widget.insert(tk.END, text + "\n")
+        widget.see(tk.END)
+        widget.update()
+
     def log(self, text: str):
-        self.progress_text.insert(tk.END, text + "\n")
-        self.progress_text.see(tk.END)
-        self.progress_text.update()
+        """
+        Single logger callback used by both:
+        - runtime.set_logger(self.log)
+        - progress_callback=self.log
+
+        We route output into:
+        - API tab: prompts + replies
+        - Errors tab: API errors + other errors
+        - Progress tab: everything else
+        """
+
+        t = (text or "").strip()
+
+        # Detect start of blocks
+        if "----- PROMPT TILL MODELLEN -----" in t:
+            self._log_mode = "api"
+            self._in_block = True
+            self.notebook.select(0)  # jump to API tab
+            self._append_text(self.api_text, t)
+            return
+
+        if "----- SVAR FRÅN MODELLEN -----" in t:
+            self._log_mode = "api"
+            self._in_block = True
+            self.notebook.select(0)
+            self._append_text(self.api_text, t)
+            return
+
+        if "----- FEL VID API-ANROP -----" in t:
+            self._log_mode = "err"
+            self._in_block = True
+            self.notebook.select(1)  # jump to Errors tab
+            self._append_text(self.err_text, t)
+            return
+
+        # Detect end of block
+        if t == "--------------------------------" and self._in_block:
+            if self._log_mode == "api":
+                self._append_text(self.api_text, t)
+            elif self._log_mode == "err":
+                self._append_text(self.err_text, t)
+            else:
+                self._append_text(self.progress_text, t)
+
+            self._in_block = False
+            self._log_mode = "other"
+            return
+
+        # Route normal lines based on current mode
+        if self._log_mode == "api":
+            self._append_text(self.api_text, t)
+        elif self._log_mode == "err":
+            self._append_text(self.err_text, t)
+        else:
+            self._append_text(self.progress_text, t)
 
     def run(self):
         claim = self.claim_path_var.get().strip()
@@ -151,6 +283,9 @@ class App:
         if runtime_choice in ("internal", "openai") and not api_key:
             messagebox.showerror("Fel", "API-nyckel krävs för intern/extern GPT.")
             return
+        if runtime_choice == "copilot" and not api_key:
+            # Copilot may operate without a key in some setups, but warn the user
+            messagebox.showwarning("Varning", "Ingen API-nyckel angiven för Copilot-rutinen.")
 
         self.status_var.set("Kör pipeline...")
         self.root.update_idletasks()
@@ -159,10 +294,25 @@ class App:
             if runtime_choice == "ollama":
                 runtime = OllamaRuntime(model=ollama_model)
             elif runtime_choice == "internal":
-                runtime = InternalGPTRuntime(api_key=api_key, model=self.model_var.get(), use_internal=True)
+                runtime = InternalGPTRuntime(
+                    api_key=api_key,
+                    model=self.model_var.get(),
+                    use_internal=True,
+                )
+            elif runtime_choice == "copilot":
+                # Copilot uses the same model field; API key optional
+                runtime = CopilotRuntime(
+                    model=self.model_var.get(),
+                    api_key=api_key or None,
+                )
             else:
-                runtime = InternalGPTRuntime(api_key=api_key, model=self.model_var.get(), use_internal=False)
-            # 🔥 Aktivera loggning till GUI 
+                runtime = InternalGPTRuntime(
+                    api_key=api_key,
+                    model=self.model_var.get(),
+                    use_internal=False,
+                )
+
+            # send all runtime logs into our router
             runtime.set_logger(self.log)
 
             out_path = run_pipeline(
@@ -170,11 +320,15 @@ class App:
                 dtc_file=dtc,
                 runtime=runtime,
                 target_lang=target_lang,
-                progress_callback=self.log
+                progress_callback=self.log,
             )
 
         except Exception as e:
             self.status_var.set("Fel.")
+            # Also log the exception to the error tab
+            self.log("----- FEL VID KÖRNING -----")
+            self.log(str(e))
+            self.log("--------------------------------")
             messagebox.showerror("Fel vid körning", str(e))
             return
 
