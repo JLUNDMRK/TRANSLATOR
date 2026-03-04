@@ -30,6 +30,7 @@ class App:
         self.status_var = tk.StringVar(value="Redo.")
         self.runtime_var = tk.StringVar(value="internal")
         self.ollama_model_choice_var = tk.StringVar(value=default_ollama_model)
+        self.decode_dtc_var = tk.BooleanVar(value=False)
 
         # Target language selection
         self.target_lang_var = tk.StringVar(value="en")  # en or sv
@@ -48,10 +49,23 @@ class App:
         tk.Button(root, text="Bläddra...", command=self.choose_claim).grid(row=row, column=2, padx=5)
         row += 1
 
+        # Decode DTC checkbox
+        self.decode_dtc_check = tk.Checkbutton(
+            root,
+            text="Decode DTC",
+            variable=self.decode_dtc_var,
+            command=self.on_decode_dtc_change
+        )
+        self.decode_dtc_check.grid(row=row, column=0, sticky="w")
+        row += 1
+
         # DTC file
-        tk.Label(root, text="DTC-fil (Excel/CSV):").grid(row=row, column=0, sticky="w")
-        tk.Entry(root, textvariable=self.dtc_path_var, width=60).grid(row=row, column=1, padx=5)
-        tk.Button(root, text="Bläddra...", command=self.choose_dtc).grid(row=row, column=2, padx=5)
+        self.dtc_label = tk.Label(root, text="DTC-fil (Excel/CSV):")
+        self.dtc_label.grid(row=row, column=0, sticky="w")
+        self.dtc_entry = tk.Entry(root, textvariable=self.dtc_path_var, width=60, state="disabled")
+        self.dtc_entry.grid(row=row, column=1, padx=5)
+        self.dtc_button = tk.Button(root, text="Bläddra...", command=self.choose_dtc, state="disabled")
+        self.dtc_button.grid(row=row, column=2, padx=5)
         row += 1
 
         # Runtime selection
@@ -177,6 +191,15 @@ class App:
         else:
             self.api_entry.config(state="normal")
 
+    def on_decode_dtc_change(self):
+        """Enable/disable DTC file input based on checkbox state"""
+        if self.decode_dtc_var.get():
+            self.dtc_entry.config(state="normal")
+            self.dtc_button.config(state="normal")
+        else:
+            self.dtc_entry.config(state="disabled")
+            self.dtc_button.config(state="disabled")
+
     def choose_claim(self):
         path = filedialog.askopenfilename(
             title="Välj claim-fil",
@@ -271,13 +294,15 @@ class App:
         runtime_choice = self.runtime_var.get()
         ollama_model = self.ollama_model_choice_var.get()
         target_lang = self.target_lang_var.get()
+        decode_dtc = self.decode_dtc_var.get()
 
         if not claim or not Path(claim).exists():
             messagebox.showerror("Fel", "Ogiltig claim-fil.")
             return
 
-        if not dtc or not Path(dtc).exists():
-            messagebox.showerror("Fel", "Ogiltig DTC-fil.")
+        # Only validate DTC file if decode_dtc is checked
+        if decode_dtc and (not dtc or not Path(dtc).exists()):
+            messagebox.showerror("Fel", "DTC-fil måste väljas när 'Decode DTC' är aktiverat.")
             return
 
         if runtime_choice in ("internal", "openai") and not api_key:
@@ -317,7 +342,7 @@ class App:
 
             out_path = run_pipeline(
                 claim_file=claim,
-                dtc_file=dtc,
+                dtc_file=dtc if decode_dtc else None,
                 runtime=runtime,
                 target_lang=target_lang,
                 progress_callback=self.log,
