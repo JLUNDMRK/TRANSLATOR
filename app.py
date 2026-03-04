@@ -31,6 +31,7 @@ class App:
         self.runtime_var = tk.StringVar(value="internal")
         self.ollama_model_choice_var = tk.StringVar(value=default_ollama_model)
         self.decode_dtc_var = tk.BooleanVar(value=False)
+        self.text_column_var = tk.StringVar(value="")  # Will be auto-detected
 
         # Target language selection
         self.target_lang_var = tk.StringVar(value="en")  # en or sv
@@ -66,6 +67,13 @@ class App:
         self.dtc_entry.grid(row=row, column=1, padx=5)
         self.dtc_button = tk.Button(root, text="Bläddra...", command=self.choose_dtc, state="disabled")
         self.dtc_button.grid(row=row, column=2, padx=5)
+        row += 1
+
+        # Text column selection
+        tk.Label(root, text="Textkolumn:").grid(row=row, column=0, sticky="w")
+        self.text_col_entry = tk.Entry(root, textvariable=self.text_column_var, width=60)
+        self.text_col_entry.grid(row=row, column=1, padx=5)
+        tk.Label(root, text="(auto-detekteras när fil väljs)").grid(row=row, column=2, sticky="w", padx=5)
         row += 1
 
         # Runtime selection
@@ -207,6 +215,31 @@ class App:
         )
         if path:
             self.claim_path_var.set(path)
+            # Try to detect text column
+            try:
+                if path.endswith(('.xlsx', '.xls')):
+                    df = pd.read_excel(path)
+                else:
+                    df = pd.read_csv(path)
+                
+                # Find text-like columns
+                text_columns = []
+                for col in df.columns:
+                    col_lower = col.lower()
+                    # Prioritize common text column names
+                    if any(pattern in col_lower for pattern in ["claim", "text", "desc", "description"]):
+                        text_columns.append(col)
+                
+                if text_columns:
+                    # Auto-select the first matching column
+                    selected_col = text_columns[0]
+                    self.text_column_var.set(selected_col)
+                    self.status_var.set(f"Kolumn detekterad: {selected_col}")
+                else:
+                    # If no matching column, show available columns
+                    self.status_var.set(f"Tillgängliga kolumner: {', '.join(df.columns[:5])}")
+            except Exception as e:
+                self.status_var.set(f"Kunde inte läsa fil: {str(e)}")
 
     def choose_dtc(self):
         path = filedialog.askopenfilename(
@@ -346,6 +379,7 @@ class App:
                 runtime=runtime,
                 target_lang=target_lang,
                 progress_callback=self.log,
+                text_column=self.text_column_var.get() if self.text_column_var.get() else None,
             )
 
         except Exception as e:
