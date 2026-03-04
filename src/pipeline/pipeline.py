@@ -4,14 +4,14 @@ from typing import Optional
 from .dtc_lookup import load_dtc_database, lookup_dtc_entries
 from .extractor import extract_dtc_codes
 
-def run_pipeline(claim_file, dtc_file: Optional[str], runtime, target_lang="en", progress_callback=None, text_column=None):
+def run_pipeline(claim_file, dtc_file: Optional[str], runtime, target_lang="en", progress_callback=None, text_column="CLAIM_TEXT_DESC"):
     """
     claim_file: path to claim Excel/CSV
     dtc_file: path to DTC Excel/CSV (optional)
     runtime: InternalGPTRuntime, OllamaRuntime or CopilotRuntime
     target_lang: "en" or "sv"
     progress_callback: function for logging progress
-    text_column: name of the text column to process (auto-detect if None)
+    text_column: name of the text column to process (fixed to CLAIM_TEXT_DESC)
     """
 
     # Load claim file
@@ -30,33 +30,10 @@ def run_pipeline(claim_file, dtc_file: Optional[str], runtime, target_lang="en",
             if progress_callback:
                 progress_callback(f"Fel vid laddning av DTC-databas: {e}")
 
-    # Find text column if not specified
-    if text_column is None:
-        # Try common column names
-        for col_name in ["CLAIM_TEXT_DESC", "claim_text_desc", "description", "Description", "text", "Text", "claim", "Claim"]:
-            if col_name in claim_df.columns:
-                text_column = col_name
-                break
-        
-        # If still not found, try case-insensitive match for common patterns
-        if text_column is None:
-            for col in claim_df.columns:
-                col_lower = col.lower()
-                if any(pattern in col_lower for pattern in ["claim", "text", "desc", "description"]):
-                    text_column = col
-                    break
-    
-    # Ensure we found a text column
-    if text_column is None:
-        raise ValueError(
-            f"Kunde inte hitta textkolumn i filen.\n"
-            f"Tillgängliga kolumner: {', '.join(claim_df.columns)}\n"
-            f"Förväntade namn: CLAIM_TEXT_DESC, description, text eller liknande."
-        )
-    
+    # Validate that CLAIM_TEXT_DESC column exists
     if text_column not in claim_df.columns:
         raise ValueError(
-            f"Kolumnen '{text_column}' finns inte i filen.\n"
+            f"Kolumnen '{text_column}' saknas i filen.\n"
             f"Tillgängliga kolumner: {', '.join(claim_df.columns)}"
         )
     
