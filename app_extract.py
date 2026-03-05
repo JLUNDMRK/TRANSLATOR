@@ -105,6 +105,7 @@ def extract_codes(text: str) -> Tuple[List[str], List[str]]:
 def augment_dataframe(df: pd.DataFrame, text_col: str) -> pd.DataFrame:
     """
     Adds columns for detected_language, translated_text, DTC/COMP lists and up to 5 codes each.
+    Also converts "Day To Repair" to "Weeks To Repair" if the column exists.
     """
     df = df.copy()
     dtc_lists = []
@@ -132,6 +133,13 @@ def augment_dataframe(df: pd.DataFrame, text_col: str) -> pd.DataFrame:
     for i in range(5):
         df[f"DTC{i+1}"] = dtc_cols[i]
         df[f"COMP{i+1}"] = comp_cols[i]
+    
+    # Convert "Day To Repair" to "Weeks To Repair" if the column exists
+    if "Day To Repair" in df.columns:
+        df["Weeks To Repair"] = df["Day To Repair"].apply(
+            lambda x: round(x / 7, 2) if pd.notna(x) and isinstance(x, (int, float)) else ""
+        )
+    
     return df
 
 if __name__ == "__main__":
